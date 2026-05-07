@@ -1,0 +1,9 @@
+{
+  "paths": ["/"],
+  "strategy": "mobile",
+  "thresholds": {
+    "lcp_increase_ms": 500,
+    "score_drop": 5
+  },
+  "lookback_hours": 48
+}

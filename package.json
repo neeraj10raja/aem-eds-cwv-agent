@@ -1,0 +1,16 @@
+{
+  "name": "aem-eds-cwv-agent",
+  "version": "1.0.0",
+  "description": "Automated Core Web Vitals regression detection and repair agent for Adobe Edge Delivery Services sites.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "lint": "eslint perf-agent/",
+    "lint:fix": "eslint perf-agent/ --fix"
+  },
+  "devDependencies": {
+    "@babel/eslint-parser": "7.28.6",
+    "eslint": "8.57.1",
+    "eslint-config-airbnb-base": "15.0.0",
+    "eslint-plugin-import": "2.32.0"
+  }
+}
