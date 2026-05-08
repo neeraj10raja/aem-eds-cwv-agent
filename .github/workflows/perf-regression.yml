@@ -1,12 +1,6 @@
 name: Performance Regression Detection
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'
-  push:
-    branches: ['main']
-    paths-ignore:
-      - '.github/baselines/performance.json'
   workflow_dispatch:
     inputs:
       dry_run:
