@@ -121,9 +121,11 @@ This copies into your EDS repo:
 ```text
 perf-agent/
 perf-agent.config.json
-.github/workflows/perf-regression.yml
+.github/workflows/perf-regression.yml   ← runs every 6h + on push to main
 .github/baselines/performance.json
 ```
+
+If your repo has an `.eslintrc.js` or `.eslintrc.cjs`, the installer automatically patches it to treat `perf-agent/` as Node.js code. Without this patch the existing Build workflow will fail on lint.
 
 Safe default: `auto_fix_enabled` is `false`, so it opens issues and does not create AI-generated fix PRs.
 
@@ -297,7 +299,9 @@ perf-agent/
 └── fix.js         # Apply fix and verify preview
 
 scripts/
-└── install.js     # One-command installer for EDS repos
+├── install.js                  # One-command installer for EDS repos
+└── templates/
+    └── perf-regression.yml     # Workflow template copied into client repos (schedule + push triggers)
 
 test/
 ├── baseline.test.js

@@ -52,6 +52,27 @@ function buildConfig(paths, siteUrl) {
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
+function patchEsLintConfig(target, agentDir) {
+  const candidates = ['.eslintrc.js', '.eslintrc.cjs'];
+  const found = candidates.find((f) => existsSync(join(target, f)));
+  if (!found) return false;
+
+  const eslintPath = join(target, found);
+  const content = readFileSync(eslintPath, 'utf8');
+
+  if (content.includes(agentDir)) return false;
+
+  const patched = content.replace(
+    /files:\s*\[(['"`]tools\/\*\*\/\*\.js['"`])\]/,
+    `files: ['tools/**/*.js', '${agentDir}/**/*.js']`,
+  );
+
+  if (patched === content) return false;
+
+  writeFileSync(eslintPath, patched);
+  return true;
+}
+
 function install(args) {
   if (!args.target) {
     throw new Error('Usage: node scripts/install.js --target /path/to/eds-repo [--site-url https://example.com] [--paths /,/blog]');
@@ -66,7 +87,8 @@ function install(args) {
 
   const workflowDir = join(target, '.github/workflows');
   mkdirSync(workflowDir, { recursive: true });
-  const workflow = readFileSync(join(repoRoot, '.github/workflows/perf-regression.yml'), 'utf8');
+  const templatePath = join(repoRoot, 'scripts/templates/perf-regression.yml');
+  const workflow = readFileSync(templatePath, 'utf8');
   writeFileSync(join(workflowDir, 'perf-regression.yml'), rewriteWorkflow(workflow, args.agentDir));
 
   const baselineDir = join(target, '.github/baselines');
@@ -76,7 +98,10 @@ function install(args) {
 
   writeFileSync(join(target, 'perf-agent.config.json'), buildConfig(args.paths, args.siteUrl));
 
+  const eslintPatched = patchEsLintConfig(target, args.agentDir);
+
   console.log(`Installed perf agent into ${target}`);
+  if (eslintPatched) console.log('Patched .eslintrc to add perf-agent Node.js overrides.');
   console.log('');
   console.log('Next steps in GitHub:');
   console.log('1. Add repository secret PSI_API_KEY.');
