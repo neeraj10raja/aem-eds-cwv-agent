@@ -7,18 +7,54 @@ import {
   getRecentCommits,
   getCommitDiff,
   checkOpenPRs,
+  checkOpenIssues,
   createPR,
   createIssue,
 } from './github-api.js';
 
 const BASELINE_PATH = '.github/baselines/performance.json';
 const CONFIG_PATH = 'perf-agent.config.json';
+const PERF_PR_LABEL = 'perf-regression';
+const HUMAN_REVIEW_LABEL = 'perf-regression-needs-human';
+const DEFAULT_CONFIG = {
+  paths: ['/'],
+  strategy: 'mobile',
+  thresholds: {
+    lcp_good_ms: 2500,
+    inp_good_ms: 200,
+    cls_good: 0.1,
+    lcp_increase_ms: 500,
+    score_drop: 5,
+  },
+  lookback_hours: 48,
+  default_branch: 'main',
+  model: 'gpt-4o',
+  ai_diagnosis_enabled: true,
+  auto_fix_enabled: false,
+  require_psi_api_key: true,
+  preview_poll: {
+    timeout_ms: 180000,
+    interval_ms: 10000,
+  },
+};
 
 function loadConfig() {
-  return JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  return {
+    ...DEFAULT_CONFIG,
+    ...config,
+    thresholds: {
+      ...DEFAULT_CONFIG.thresholds,
+      ...(config.thresholds ?? {}),
+    },
+    preview_poll: {
+      ...DEFAULT_CONFIG.preview_poll,
+      ...(config.preview_poll ?? {}),
+    },
+  };
 }
 
-function buildContext() {
+function buildContext(config) {
   const owner = process.env.REPO_OWNER;
   const repo = process.env.REPO_NAME;
   const token = process.env.GITHUB_TOKEN;
@@ -28,9 +64,27 @@ function buildContext() {
   if (!owner || !repo || !token) {
     throw new Error('REPO_OWNER, REPO_NAME, and GITHUB_TOKEN env vars are required');
   }
+  if (config.require_psi_api_key !== false && !apiKey && !dryRun) {
+    throw new Error('PSI_API_KEY is required for production runs. Set DRY_RUN=true to test without it.');
+  }
   return {
-    owner, repo, token, dryRun, apiKey,
+    owner,
+    repo,
+    token,
+    dryRun,
+    apiKey,
+    defaultBranch: config.default_branch,
+    model: config.model,
   };
+}
+
+function buildSiteBase(config, owner, repo) {
+  const configured = config.site_url || `https://${config.default_branch}--${repo}--${owner}.aem.page`;
+  return configured.replace(/\/$/, '');
+}
+
+function buildURL(siteBase, path) {
+  return new URL(path, `${siteBase}/`).toString();
 }
 
 function buildPRBody(regression, result, diagnosisResult) {
@@ -38,10 +92,22 @@ function buildPRBody(regression, result, diagnosisResult) {
   const statusIcon = verified ? '✅' : '⚠️';
 
   let body = `## ⚡ Performance Regression ${verified ? 'Fixed' : 'Detected'}\n\n`;
+  if (regression.reasons?.length) {
+    body += '### Trigger Reasons\n';
+    regression.reasons.forEach((reason) => {
+      body += `- ${reason}\n`;
+    });
+    body += '\n';
+  }
   body += '| Metric | Baseline | Current | Delta |\n';
   body += '|--------|----------|---------|-------|\n';
-  body += `| LCP | ${regression.baseline_lcp_ms}ms | ${regression.current_lcp_ms}ms | +${regression.lcp_delta_ms}ms ❌ |\n`;
-  body += `| Score | ${regression.baseline_score} | ${regression.current_score} | -${regression.score_delta} ❌ |\n\n`;
+  const baselineLCP = regression.baseline_lcp_ms == null ? 'n/a' : `${regression.baseline_lcp_ms}ms`;
+  const scoreDelta = regression.score_delta > 0 ? `-${regression.score_delta}` : 'n/a';
+  const lcpDelta = regression.lcp_delta_ms > 0 ? `+${regression.lcp_delta_ms}ms` : 'n/a';
+  body += `| LCP | ${baselineLCP} | ${regression.current_lcp_ms}ms | ${lcpDelta} |\n`;
+  body += `| INP | n/a | ${regression.current_inp_ms}ms | n/a |\n`;
+  body += `| CLS | n/a | ${regression.current_cls} | n/a |\n`;
+  body += `| Score | ${regression.baseline_score ?? 'n/a'} | ${regression.current_score} | ${scoreDelta} |\n\n`;
   body += `**Diagnosis:** ${diagnosisResult.diagnosis}\n\n`;
   body += `**Root Cause:** ${diagnosisResult.rootCause}\n\n`;
 
@@ -64,27 +130,40 @@ async function handleRegression(regression, commits, diffs, config, context) {
   const {
     owner, repo, token, dryRun,
   } = context;
-
-  const alreadyOpen = await checkOpenPRs(owner, repo, 'perf-regression', token);
-  if (alreadyOpen) {
-    console.log('[perf-agent] Open perf-regression PR already exists — skipping duplicate.');
-    return;
-  }
+  const urlPath = new URL(regression.url).pathname;
 
   let diagnosisResult = { diagnosis: 'AI diagnosis unavailable', rootCause: 'unknown', confidence: 'low' };
-  try {
-    diagnosisResult = await diagnose(regression, commits, diffs, token);
-    console.log(`[diagnose] confidence=${diagnosisResult.confidence}: ${diagnosisResult.diagnosis}`);
-  } catch (err) {
-    console.error(`[diagnose] Failed: ${err.message}`);
+  if (config.ai_diagnosis_enabled === false) {
+    diagnosisResult = {
+      diagnosis: 'AI diagnosis disabled by configuration',
+      rootCause: 'unknown',
+      confidence: 'low',
+    };
+  } else {
+    try {
+      diagnosisResult = await diagnose(regression, commits, diffs, token, context.model);
+      console.log(`[diagnose] confidence=${diagnosisResult.confidence}: ${diagnosisResult.diagnosis}`);
+    } catch (err) {
+      console.error(`[diagnose] Failed: ${err.message}`);
+    }
   }
 
   let result;
-  if (diagnosisResult.confidence === 'high' && diagnosisResult.fix) {
+  if (config.auto_fix_enabled && diagnosisResult.confidence === 'high' && diagnosisResult.fix) {
+    const titlePrefix = `perf: CWV regression on ${urlPath}`;
+    const alreadyOpen = await checkOpenPRs(owner, repo, { titlePrefix }, token);
+    if (alreadyOpen) {
+      console.log(`[perf-agent] Open perf-regression PR already exists for ${urlPath}.`);
+      return;
+    }
+
     try {
       result = await applyAndVerify(diagnosisResult.fix, regression, {
         ...context,
         strategy: config.strategy,
+        defaultBranch: config.default_branch,
+        previewTimeoutMs: config.preview_poll.timeout_ms,
+        previewPollMs: config.preview_poll.interval_ms,
       });
       console.log(`[fix] branch=${result.branch} verified=${result.success}`);
     } catch (err) {
@@ -92,29 +171,39 @@ async function handleRegression(regression, commits, diffs, config, context) {
       result = { success: false, reason: err.message };
     }
 
-    const urlPath = new URL(regression.url).pathname;
     const status = result?.success ? 'fix verified' : 'fix unverified';
     const title = `perf: CWV regression on ${urlPath} (${status})`;
     const body = buildPRBody(regression, result, diagnosisResult);
 
     if (!dryRun && result?.branch) {
       const pr = await createPR(owner, repo, {
-        title, body, head: result.branch,
+        title,
+        body,
+        head: result.branch,
+        base: config.default_branch,
+        labels: [PERF_PR_LABEL],
       }, token);
       console.log(`[perf-agent] PR created: ${pr.url}`);
     } else {
       console.log(`[DRY RUN] Would open PR: "${title}"`);
     }
   } else {
-    const urlPath = new URL(regression.url).pathname;
     const title = `perf: CWV regression on ${urlPath} — needs human review`;
     const body = buildPRBody(regression, null, diagnosisResult);
+    const issueAlreadyOpen = await checkOpenIssues(owner, repo, {
+      label: HUMAN_REVIEW_LABEL,
+      title,
+    }, token);
+    if (issueAlreadyOpen) {
+      console.log(`[perf-agent] Open issue already exists: "${title}"`);
+      return;
+    }
 
     if (!dryRun) {
       const issue = await createIssue(owner, repo, {
         title,
         body,
-        labels: ['perf-regression-needs-human'],
+        labels: [HUMAN_REVIEW_LABEL],
       }, token);
       console.log(`[perf-agent] Issue created: ${issue.url}`);
     } else {
@@ -125,17 +214,17 @@ async function handleRegression(regression, commits, diffs, config, context) {
 
 async function main() {
   const config = loadConfig();
-  const context = buildContext();
+  const context = buildContext(config);
   const {
     owner, repo, token, dryRun, apiKey,
   } = context;
-  const siteBase = `https://main--${repo}--${owner}.aem.page`;
+  const siteBase = buildSiteBase(config, owner, repo);
   const updateBaseline = process.argv.includes('--update-baseline');
 
   console.log(`[perf-agent] site=${siteBase} paths=${config.paths.join(',')}${dryRun ? ' DRY_RUN' : ''}`);
 
   const currentScores = await Promise.all(
-    config.paths.map((p) => fetchPSI(`${siteBase}${p}`, config.strategy, apiKey)),
+    config.paths.map((p) => fetchPSI(buildURL(siteBase, p), config.strategy, apiKey)),
   );
   currentScores.forEach((s) => console.log(`[psi] ${s.url} score=${s.score} lcp=${s.lcp_ms}ms`));
 

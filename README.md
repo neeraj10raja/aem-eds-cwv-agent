@@ -1,19 +1,54 @@
 # aem-eds-cwv-agent
 
-> Automated Core Web Vitals regression detection and repair agent for Adobe Edge Delivery Services sites.
+> Production-hardened Core Web Vitals regression detection and repair agent for Adobe Edge Delivery Services sites.
 
 [![Performance Regression Detection](https://github.com/neeraj10raja/aem-eds-cwv-agent/actions/workflows/perf-regression.yml/badge.svg)](https://github.com/neeraj10raja/aem-eds-cwv-agent/actions/workflows/perf-regression.yml)
-![Zero paid APIs](https://img.shields.io/badge/cost-free-brightgreen)
 ![Node 20](https://img.shields.io/badge/node-%3E%3D20-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-lightgrey)
 
 ---
 
-## The Problem
+## What This Does
 
-A developer pushes code on Tuesday. By Wednesday, the homepage is loading 2 seconds slower for real users. Nobody notices. Hours pass. A teammate eventually sits down, opens DevTools, runs Lighthouse manually, digs through git history — it takes hours to find the one line that caused it.
+This agent watches an Adobe Edge Delivery Services site for performance regressions.
 
-**This agent closes that loop automatically.**
+When a page gets slower, it:
+
+1. Runs PageSpeed Insights for configured URLs.
+2. Compares the current Lighthouse performance data with a committed baseline.
+3. Looks at recent GitHub commits.
+4. Uses GitHub Models to diagnose the likely cause.
+5. Opens a human-review issue by default.
+6. Polls the AEM preview URL until the new branch is live.
+7. If `auto_fix_enabled` is explicitly enabled, applies a safe single-file fix, tests it, and opens a labeled PR.
+
+The agent never merges code. A human still reviews every issue and PR.
+
+---
+
+## Important AEM EDS Terms
+
+**AEM** means Adobe Experience Manager.
+
+**Edge Delivery Services** is Adobe's fast site delivery layer for AEM-backed sites. Code usually lives in GitHub, content can come from documents or AEM authoring, and pages are delivered through Adobe's edge network.
+
+**AEM preview URL** is the temporary URL for a Git branch:
+
+```text
+https://branch--repo--owner.aem.page
+```
+
+This agent creates a DNS-safe branch name and verifies that preview URL before running the second performance check.
+
+**Core Web Vitals** are Google's main page-experience metrics:
+
+| Metric | Meaning |
+|---|---|
+| `LCP` | How fast the main visible content appears. Good target: 2500ms or less |
+| `INP` | How quickly the page responds to user input. Good target: 200ms or less |
+| `CLS` | How much the layout shifts while loading. Good target: 0.1 or less |
+
+This agent stores and compares Lighthouse/PageSpeed data. It is useful for regression detection, but it should not be treated as a perfect replacement for real-user monitoring.
 
 ---
 
@@ -21,138 +56,154 @@ A developer pushes code on Tuesday. By Wednesday, the homepage is loading 2 seco
 
 ```mermaid
 flowchart TD
-    A([🕐 Trigger\nSchedule · Push · Manual]) --> B
-
-    B[📊 Fetch CWV scores\nPageSpeed Insights API] --> C
-
-    C{Compare against\nbaseline} -->|No regression| D([✅ Done])
-    C -->|Regression detected| E
-
-    E[🔍 Fetch recent commits\n& diffs from GitHub] --> F
-
-    F[🤖 GitHub Models\ngpt-4o-mini via GITHUB_TOKEN\nDiagnose root cause + suggest fix] --> G
-
-    G{Confidence?}
-
-    G -->|High — block-level fix| H
-    G -->|Low — shared utility\nor uncertain| L
-
-    H[🔧 Apply fix to\nnew branch] --> I
-
-    I[⏱️ Wait 30s for\nAEM Code Sync] --> J
-
-    J[📊 Re-run PSI on\npreview URL] --> K
-
-    K{Score\nrecovered?}
-    K -->|Yes| M([🟢 Open PR\n✅ Fix verified])
-    K -->|No| N([🟡 Open PR\n⚠️ Fix unverified])
-
-    L([🔴 Open Issue\nDiagnosis only\nNeeds human review])
-
-    style A fill:#6366f1,color:#fff,stroke:none
-    style D fill:#22c55e,color:#fff,stroke:none
-    style M fill:#22c55e,color:#fff,stroke:none
-    style N fill:#f59e0b,color:#fff,stroke:none
-    style L fill:#ef4444,color:#fff,stroke:none
-    style F fill:#0ea5e9,color:#fff,stroke:none
+    A([Trigger: schedule, push, manual]) --> B[Run lint and unit tests]
+    B --> C[Fetch PageSpeed Insights data]
+    C --> D{Compare with baseline}
+    D -->|No regression| E([Done])
+    D -->|Regression| F[Fetch recent commits and diffs]
+    F --> G[Ask GitHub Models for diagnosis]
+    G --> H{High confidence single-file fix?}
+    H -->|No| I[Open issue for human review]
+    H -->|Yes| J[Create safe perf-fix branch]
+    J --> K[Apply exact string replacement]
+    K --> L[Poll AEM preview URL]
+    L --> M[Re-run PageSpeed Insights]
+    M --> N[Open labeled PR with verification result]
 ```
 
 ---
 
-## Key Design Decisions
+## Production Hardening Included
 
-| Decision | Why |
+| Area | What is handled |
 |---|---|
-| **Real PSI data, not lab tests** | Catches regressions on real devices and networks that synthetic tests miss |
-| **GitHub Models via `GITHUB_TOKEN`** | Zero additional API keys — every GitHub Action already has this token |
-| **Verify fix before opening PR** | Every PR the agent opens is already confirmed to improve scores |
-| **Never auto-merge** | Code changes can have side effects beyond performance — a human makes the final call |
-| **Block-level fixes only** | Shared utilities have wide blast radius — the agent escalates those to a human |
-| **One PR per root cause** | Easier to review, revert, and merge incrementally |
+| Duplicate PRs | PRs get a `perf-regression` label, and open PRs are also checked by branch prefix |
+| Duplicate issues | Human-review issues are deduped by label and title |
+| CWV thresholds | Flags both regressions and absolute bad LCP/INP/CLS values |
+| AEM Code Sync | The agent polls the preview URL instead of sleeping for a fixed 30 seconds |
+| Preview branch names | Generated branch names avoid slashes so they work inside `*.aem.page` hostnames |
+| PSI reliability | `PSI_API_KEY` is required for normal production runs, with retry/backoff |
+| GitHub reliability | GitHub API calls retry transient failures |
+| Model quality | Default model is `gpt-4o`, configurable in `perf-agent.config.json` |
+| Enterprise safety | AI diagnosis can be disabled, and AI code fixes are opt-in |
+| Large diffs | Truncated diffs force low-confidence diagnosis |
+| Custom domains | `site_url` lets teams monitor production or custom domains, not only `*.aem.page` |
+| CI safety | Lint and unit tests run before the agent |
+| Agent failures | Workflow failures create or update a GitHub issue |
 
 ---
 
-## Zero-Cost Stack
+## Setup
 
-| Component | Solution | Cost |
-|---|---|---|
-| Performance monitoring | PageSpeed Insights (unauthenticated) | Free |
-| AI diagnosis + fix | GitHub Models `gpt-4o-mini` via `GITHUB_TOKEN` | Free |
-| Branch + PR creation | GitHub REST API via `GITHUB_TOKEN` | Free |
-| Baseline storage | JSON committed to `.github/baselines/` | Free |
-| CI runner | GitHub Actions | Free |
+For enterprise rollout patterns, see [docs/enterprise-integration.md](docs/enterprise-integration.md).
 
----
-
-## Quick Start
-
-### 1. Copy the workflow into your EDS repo
+### 1. Copy the workflow
 
 ```bash
 cp .github/workflows/perf-regression.yml your-eds-repo/.github/workflows/
 ```
 
-### 2. Copy and configure `perf-agent.config.json`
-
-```bash
-cp perf-agent.config.example.json your-eds-repo/perf-agent.config.json
-```
-
-Edit the paths you want to monitor:
-
-```json
-{
-  "paths": ["/", "/products", "/about"],
-  "strategy": "mobile",
-  "thresholds": {
-    "lcp_increase_ms": 500,
-    "score_drop": 5
-  },
-  "lookback_hours": 48
-}
-```
-
-### 3. Copy the agent source
+### 2. Copy the agent
 
 ```bash
 cp -r perf-agent/ your-eds-repo/perf-agent/
+cp perf-agent.config.example.json your-eds-repo/perf-agent.config.json
 cp .github/baselines/performance.json your-eds-repo/.github/baselines/performance.json
 ```
 
-### 4. Enable workflow permissions
+### 3. Configure the site
 
-In your repo: **Settings → Actions → General → Workflow permissions**
-- Enable **"Allow GitHub Actions to create and approve pull requests"**
+```json
+{
+  "site_url": "https://www.example.com",
+  "paths": ["/", "/products", "/about"],
+  "strategy": "mobile",
+  "thresholds": {
+    "lcp_good_ms": 2500,
+    "inp_good_ms": 200,
+    "cls_good": 0.1,
+    "lcp_increase_ms": 500,
+    "score_drop": 5
+  },
+  "lookback_hours": 48,
+  "default_branch": "main",
+  "model": "gpt-4o",
+  "ai_diagnosis_enabled": true,
+  "auto_fix_enabled": false,
+  "require_psi_api_key": true,
+  "preview_poll": {
+    "timeout_ms": 180000,
+    "interval_ms": 10000
+  }
+}
+```
+
+### 4. Add required secrets and permissions
+
+Create a Google PageSpeed Insights API key and add it as:
+
+```text
+PSI_API_KEY
+```
+
+In GitHub, enable:
+
+```text
+Settings -> Actions -> General -> Workflow permissions
+Read and write permissions
+Allow GitHub Actions to create and approve pull requests
+```
+
+The built-in `GITHUB_TOKEN` is used for GitHub API calls and GitHub Models.
+
+If your organization does not allow source diffs to be sent to GitHub Models, set:
+
+```json
+{
+  "ai_diagnosis_enabled": false
+}
+```
+
+Automatic fix PRs are disabled by default. To opt in after review:
+
+```json
+{
+  "auto_fix_enabled": true
+}
+```
 
 ### 5. Seed the baseline
 
-Trigger the workflow manually with **Update baseline = true**. This stores your current scores as the reference point. Commit the updated `performance.json`.
+Run the workflow manually with:
 
-That's it. The agent will now run every 6 hours.
+```text
+update_baseline = true
+```
+
+This saves current performance data into `.github/baselines/performance.json`.
 
 ---
 
 ## Configuration
 
-### `perf-agent.config.json`
-
 | Field | Description | Default |
 |---|---|---|
+| `site_url` | Base URL to test. Use your production/custom domain, or omit for AEM `*.aem.page` | `https://main--repo--owner.aem.page` |
 | `paths` | URL paths to monitor | `["/"]` |
-| `strategy` | `"mobile"` or `"desktop"` | `"mobile"` |
-| `thresholds.lcp_increase_ms` | LCP increase (ms) that triggers investigation | `500` |
+| `strategy` | PageSpeed strategy: `mobile` or `desktop` | `mobile` |
+| `thresholds.lcp_good_ms` | Absolute LCP good threshold | `2500` |
+| `thresholds.inp_good_ms` | Absolute INP good threshold | `200` |
+| `thresholds.cls_good` | Absolute CLS good threshold | `0.1` |
+| `thresholds.lcp_increase_ms` | LCP increase that triggers investigation | `500` |
 | `thresholds.score_drop` | Performance score drop that triggers investigation | `5` |
-| `lookback_hours` | How far back to look in git history | `48` |
-
-### Environment variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `GITHUB_TOKEN` | ✅ Auto-injected | Creates branches, PRs, issues — no setup needed |
-| `REPO_OWNER` | ✅ Auto-injected | GitHub username / org |
-| `REPO_NAME` | ✅ Auto-injected | Repository name |
-| `PSI_API_KEY` | Optional | Adds a Google API key for higher PSI rate limits |
-| `DRY_RUN` | Optional | Set `true` to log everything without creating PRs or issues |
+| `lookback_hours` | How far back to inspect commits | `48` |
+| `default_branch` | Base branch for fixes and default AEM preview URL | `main` |
+| `model` | GitHub Models model used for diagnosis/fix generation | `gpt-4o` |
+| `ai_diagnosis_enabled` | Send regression context and recent diffs to GitHub Models for diagnosis | `true` |
+| `auto_fix_enabled` | Allow the agent to create AI-generated fix branches and PRs | `false` |
+| `require_psi_api_key` | Require `PSI_API_KEY` unless `DRY_RUN=true` | `true` |
+| `preview_poll.timeout_ms` | Max time to wait for AEM preview branch to go live | `180000` |
+| `preview_poll.interval_ms` | Delay between preview checks | `10000` |
 
 ---
 
@@ -160,48 +211,92 @@ That's it. The agent will now run every 6 hours.
 
 ```bash
 npm install
+npm test
+npm run lint
+```
 
-# Dry run — logs scores and any regressions, creates nothing
+Dry run:
+
+```bash
 REPO_OWNER=your-org REPO_NAME=your-repo GITHUB_TOKEN=your-token DRY_RUN=true \
   node perf-agent/index.js
+```
 
-# Update the baseline to current scores
-REPO_OWNER=your-org REPO_NAME=your-repo GITHUB_TOKEN=your-token \
+Production-like run:
+
+```bash
+REPO_OWNER=your-org REPO_NAME=your-repo GITHUB_TOKEN=your-token PSI_API_KEY=your-key \
+  node perf-agent/index.js
+```
+
+Update baseline:
+
+```bash
+REPO_OWNER=your-org REPO_NAME=your-repo GITHUB_TOKEN=your-token PSI_API_KEY=your-key \
   node perf-agent/index.js --update-baseline
 ```
 
 ---
 
-## What the Agent Will Never Do
+## What The Agent Will Not Do
 
-- Merge a pull request
-- Modify `scripts/aem.js`
-- Touch shared utility files when it's uncertain
-- Create duplicate PRs for the same regression
-- Run without a `GITHUB_TOKEN`
+- It will not merge pull requests.
+- It will not create AI-generated fix PRs unless `auto_fix_enabled` is `true`.
+- It will not modify `scripts/aem.js`.
+- It will not modify files outside `blocks/` or `scripts/`.
+- It will not auto-fix when diffs are truncated.
+- It will not auto-fix broad/shared utility changes.
+- It will not run production mode without `GITHUB_TOKEN`.
+- It will not run production mode without `PSI_API_KEY`, unless `require_psi_api_key` is set to `false`.
+
+---
+
+## Current Limits
+
+This is now hardened enough to install in a real repo behind human review, but it is still not a magic autopilot.
+
+Known limits:
+
+- PageSpeed/Lighthouse data can be noisy.
+- Real-user monitoring is still recommended for important production sites.
+- AI fixes are limited to exact string replacements.
+- Complex regressions intentionally become issues instead of automatic PRs.
+- Model and API quotas still matter for large teams.
+
+That is by design: the agent should reduce investigation time without taking unsafe control of the codebase.
 
 ---
 
 ## Project Structure
 
-```
+```text
 perf-agent/
-├── index.js       # Orchestrator — runs the full detection loop
+├── index.js       # Orchestrator
 ├── psi.js         # PageSpeed Insights client
-├── baseline.js    # Load, compare, and save performance baselines
-├── diagnose.js    # GitHub Models integration — diagnosis and fix generation
-├── github-api.js  # GitHub REST client (no SDK, plain fetch)
-└── fix.js         # Apply fix to branch, verify on AEM preview URL
+├── baseline.js    # Load, compare, and save baselines
+├── diagnose.js    # GitHub Models integration
+├── github-api.js  # GitHub REST client
+└── fix.js         # Apply fix and verify preview
+
+test/
+├── baseline.test.js
+├── diagnose.test.js
+├── fix.test.js
+├── github-api.test.js
+└── psi.test.js
 
 .github/
-├── baselines/
-│   └── performance.json     # Committed baseline scores
+├── baselines/performance.json
 └── workflows/
-    └── perf-regression.yml  # GitHub Actions workflow
+    ├── ci.yml
+    └── perf-regression.yml
+
+docs/
+└── enterprise-integration.md
 ```
 
 ---
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE)
+Apache 2.0. See [LICENSE](LICENSE).

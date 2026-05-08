@@ -1,4 +1,9 @@
 const PSI_ENDPOINT = 'https://pagespeedonline.googleapis.com/pagespeedonline/v5/runPagespeed';
+const RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+function wait(ms) {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
 
 function extractOpportunities(audits) {
   return Object.values(audits)
@@ -31,19 +36,36 @@ async function fetchPSI(url, strategy = 'mobile', apiKey = null) {
 
   const endpoint = `${PSI_ENDPOINT}?${params}`;
 
-  const run = async () => {
-    const res = await fetch(endpoint);
-    if (res.status === 429 || res.status === 503) {
-      await new Promise((r) => { setTimeout(r, 10_000); });
-      const retry = await fetch(endpoint);
-      if (!retry.ok) throw new Error(`PSI ${retry.status} for ${url}`);
-      return retry.json();
+  const run = async (retries = 3) => {
+    let lastError;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetch(endpoint);
+        if (res.ok) return res.json();
+
+        lastError = new Error(`PSI ${res.status} for ${url}`);
+        if (!RETRY_STATUSES.has(res.status) || attempt === retries) {
+          throw lastError;
+        }
+      } catch (err) {
+        lastError = err;
+        if (attempt === retries) throw lastError;
+      }
+
+      if (!RETRY_STATUSES.has(Number(lastError.message.match(/PSI (\d+)/)?.[1]))) {
+        throw lastError;
+      }
+
+      // eslint-disable-next-line no-await-in-loop
+      await wait(5000 * 2 ** attempt);
     }
-    if (!res.ok) throw new Error(`PSI ${res.status} for ${url}`);
-    return res.json();
+
+    throw lastError;
   };
 
   return extractMetrics(url, await run());
 }
 
-export { fetchPSI };
+export { extractMetrics, fetchPSI };

@@ -2,8 +2,20 @@
   "paths": ["/"],
   "strategy": "mobile",
   "thresholds": {
+    "lcp_good_ms": 2500,
+    "inp_good_ms": 200,
+    "cls_good": 0.1,
     "lcp_increase_ms": 500,
     "score_drop": 5
   },
-  "lookback_hours": 48
+  "lookback_hours": 48,
+  "default_branch": "main",
+  "model": "gpt-4o",
+  "ai_diagnosis_enabled": true,
+  "auto_fix_enabled": false,
+  "require_psi_api_key": true,
+  "preview_poll": {
+    "timeout_ms": 180000,
+    "interval_ms": 10000
+  }
 }

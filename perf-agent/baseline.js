@@ -16,6 +16,7 @@ function saveBaseline(filePath, scores) {
     data[score.url] = {
       score: score.score,
       lcp_ms: score.lcp_ms,
+      inp_ms: score.inp_ms,
       cls: score.cls,
       tbt_ms: score.tbt_ms,
       updated_at: score.timestamp,
@@ -24,27 +25,51 @@ function saveBaseline(filePath, scores) {
   writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
+function buildReasons(current, base, thresholds) {
+  const reasons = [];
+  const lcpDelta = base ? current.lcp_ms - base.lcp_ms : 0;
+  const scoreDelta = base ? base.score - current.score : 0;
+
+  if (base && lcpDelta > thresholds.lcp_increase_ms) {
+    reasons.push(`LCP increased by ${lcpDelta}ms`);
+  }
+  if (base && scoreDelta > thresholds.score_drop) {
+    reasons.push(`Performance score dropped by ${scoreDelta}`);
+  }
+  if (current.lcp_ms > thresholds.lcp_good_ms) {
+    reasons.push(`LCP is above good threshold (${thresholds.lcp_good_ms}ms)`);
+  }
+  if (current.inp_ms > thresholds.inp_good_ms) {
+    reasons.push(`INP is above good threshold (${thresholds.inp_good_ms}ms)`);
+  }
+  if (current.cls > thresholds.cls_good) {
+    reasons.push(`CLS is above good threshold (${thresholds.cls_good})`);
+  }
+
+  return { reasons, lcpDelta, scoreDelta };
+}
+
 function detectRegressions(currentScores, baseline, thresholds) {
   const regressions = [];
 
   for (const current of currentScores) {
     const base = baseline[current.url];
-    if (base) {
-      const lcpDelta = current.lcp_ms - base.lcp_ms;
-      const scoreDelta = base.score - current.score;
+    const { reasons, lcpDelta, scoreDelta } = buildReasons(current, base, thresholds);
 
-      if (lcpDelta > thresholds.lcp_increase_ms || scoreDelta > thresholds.score_drop) {
-        regressions.push({
-          url: current.url,
-          baseline_score: base.score,
-          current_score: current.score,
-          score_delta: scoreDelta,
-          baseline_lcp_ms: base.lcp_ms,
-          current_lcp_ms: current.lcp_ms,
-          lcp_delta_ms: lcpDelta,
-          opportunities: current.opportunities,
-        });
-      }
+    if (reasons.length > 0) {
+      regressions.push({
+        url: current.url,
+        reasons,
+        baseline_score: base?.score ?? null,
+        current_score: current.score,
+        score_delta: scoreDelta,
+        baseline_lcp_ms: base?.lcp_ms ?? null,
+        current_lcp_ms: current.lcp_ms,
+        lcp_delta_ms: lcpDelta,
+        current_inp_ms: current.inp_ms,
+        current_cls: current.cls,
+        opportunities: current.opportunities,
+      });
     }
   }
 

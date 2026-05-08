@@ -1,6 +1,12 @@
 name: Performance Regression Detection
 
 on:
+  schedule:
+    - cron: '0 */6 * * *'
+  push:
+    branches: ['main']
+    paths-ignore:
+      - '.github/baselines/performance.json'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -32,6 +38,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Validate agent syntax
+        run: |
+          for file in perf-agent/*.js; do
+            node --check "$file"
+          done
+
       - name: Run performance agent
         run: |
           if [ "${{ github.event.inputs.update_baseline }}" = "true" ]; then
@@ -54,3 +66,35 @@ jobs:
           git add .github/baselines/performance.json
           git diff --cached --quiet || git commit -m "chore: update perf baseline [skip ci]"
           git push
+
+      - name: Alert on agent failure
+        if: ${{ failure() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'perf-agent: workflow failed';
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title === title && !issue.pull_request);
+            const body = `The performance agent failed.\n\nRun: ${runUrl}\n\nPlease inspect the workflow logs.`;
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              });
+            }

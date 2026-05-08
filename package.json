@@ -5,7 +5,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "lint": "eslint perf-agent/",
-    "lint:fix": "eslint perf-agent/ --fix"
+    "lint:fix": "eslint perf-agent/ --fix",
+    "test": "node --test"
   },
   "devDependencies": {
     "@babel/eslint-parser": "7.28.6",
