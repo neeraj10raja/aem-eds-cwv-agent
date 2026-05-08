@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Automated Core Web Vitals regression detection and repair agent for Adobe Edge Delivery Services sites.",
   "license": "Apache-2.0",
+  "type": "module",
   "scripts": {
     "lint": "eslint perf-agent/",
     "lint:fix": "eslint perf-agent/ --fix",

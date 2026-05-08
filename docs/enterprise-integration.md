@@ -29,7 +29,13 @@ After the security and governance review is complete, teams can opt in to fix PR
 
 Best for pilots and individual customer projects.
 
-Copy:
+Use the installer:
+
+```bash
+node scripts/install.js --target /path/to/eds-repo --paths /,/blog
+```
+
+Or copy manually:
 
 ```text
 perf-agent/

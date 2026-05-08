@@ -97,13 +97,73 @@ flowchart TD
 
 For enterprise rollout patterns, see [docs/enterprise-integration.md](docs/enterprise-integration.md).
 
-### 1. Copy the workflow
+### Install
+
+Clone this repo, then run the installer pointing at your EDS repo:
+
+```bash
+git clone https://github.com/neeraj10raja/aem-eds-cwv-agent
+cd aem-eds-cwv-agent
+node scripts/install.js --target /path/to/your-eds-repo --paths /,/blog
+```
+
+For a custom production domain:
+
+```bash
+node scripts/install.js \
+  --target /path/to/your-eds-repo \
+  --site-url https://www.example.com \
+  --paths /,/blog,/products
+```
+
+This copies into your EDS repo:
+
+```text
+perf-agent/
+perf-agent.config.json
+.github/workflows/perf-regression.yml
+.github/baselines/performance.json
+```
+
+Safe default: `auto_fix_enabled` is `false`, so it opens issues and does not create AI-generated fix PRs.
+
+### GitHub Setup (required for both install paths)
+
+**1. Add the PSI API key**
+
+Get a free key at `console.cloud.google.com` → enable **PageSpeed Insights API** → Credentials → Create API Key.
+
+In your EDS repo: **Settings → Secrets and variables → Actions → New repository secret**
+- Name: `PSI_API_KEY`
+- Value: your key
+
+**2. Enable Actions write permissions**
+
+In your EDS repo: **Settings → Actions → General → Workflow permissions**
+- Select **Read and write permissions**
+- Check **Allow GitHub Actions to create and approve pull requests**
+
+The built-in `GITHUB_TOKEN` is used automatically for GitHub API calls and GitHub Models — no extra setup needed.
+
+**3. Seed the baseline**
+
+Go to **Actions → Performance Regression Detection → Run workflow**, set `update_baseline` to `true`, and click Run.
+
+This hits PSI for your real pages and saves the current scores as the starting baseline. Future runs compare against these.
+
+That is it. The agent runs automatically every 6 hours and on every push to main from here.
+
+### Manual Install
+
+Use this only if your enterprise repo needs custom file placement.
+
+Copy the workflow:
 
 ```bash
 cp .github/workflows/perf-regression.yml your-eds-repo/.github/workflows/
 ```
 
-### 2. Copy the agent
+Copy the agent:
 
 ```bash
 cp -r perf-agent/ your-eds-repo/perf-agent/
@@ -111,7 +171,7 @@ cp perf-agent.config.example.json your-eds-repo/perf-agent.config.json
 cp .github/baselines/performance.json your-eds-repo/.github/baselines/performance.json
 ```
 
-### 3. Configure the site
+Configure the site:
 
 ```json
 {
@@ -138,49 +198,7 @@ cp .github/baselines/performance.json your-eds-repo/.github/baselines/performanc
 }
 ```
 
-### 4. Add required secrets and permissions
-
-Create a Google PageSpeed Insights API key and add it as:
-
-```text
-PSI_API_KEY
-```
-
-In GitHub, enable:
-
-```text
-Settings -> Actions -> General -> Workflow permissions
-Read and write permissions
-Allow GitHub Actions to create and approve pull requests
-```
-
-The built-in `GITHUB_TOKEN` is used for GitHub API calls and GitHub Models.
-
-If your organization does not allow source diffs to be sent to GitHub Models, set:
-
-```json
-{
-  "ai_diagnosis_enabled": false
-}
-```
-
-Automatic fix PRs are disabled by default. To opt in after review:
-
-```json
-{
-  "auto_fix_enabled": true
-}
-```
-
-### 5. Seed the baseline
-
-Run the workflow manually with:
-
-```text
-update_baseline = true
-```
-
-This saves current performance data into `.github/baselines/performance.json`.
+If your organization does not allow source diffs to be sent to GitHub Models, set `ai_diagnosis_enabled: false` in your config. To opt into AI fix PRs after governance review, set `auto_fix_enabled: true`.
 
 ---
 
@@ -277,6 +295,9 @@ perf-agent/
 ├── diagnose.js    # GitHub Models integration
 ├── github-api.js  # GitHub REST client
 └── fix.js         # Apply fix and verify preview
+
+scripts/
+└── install.js     # One-command installer for EDS repos
 
 test/
 ├── baseline.test.js

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildPrompt, diagnose, normalizeDiagnosis } from '../perf-agent/diagnose.js';
+import {
+  buildPrompt,
+  diagnose,
+  fixIsGroundedInDiff,
+  normalizeDiagnosis,
+} from '../perf-agent/diagnose.js';
 
 test('buildPrompt marks truncated diffs so the model knows to be conservative', () => {
   const prompt = buildPrompt({
@@ -99,7 +104,7 @@ test('normalizeDiagnosis downgrades high confidence when any diff was truncated'
   assert.equal(result.fix, undefined);
 });
 
-test('normalizeDiagnosis preserves high confidence when diffs are complete', () => {
+test('normalizeDiagnosis preserves high confidence when fix is grounded in complete diffs', () => {
   const result = normalizeDiagnosis({
     diagnosis: 'Hero image is lazy loaded.',
     rootCause: 'abc1234 blocks/hero/hero.js',
@@ -109,10 +114,35 @@ test('normalizeDiagnosis preserves high confidence when diffs are complete', () 
       original: 'img.loading = "lazy"',
       replacement: 'img.loading = "eager"',
     },
-  }, [{ diff: 'complete diff', truncated: false }]);
+  }, [{ diff: 'complete diff with img.loading = "lazy"', truncated: false }]);
 
   assert.equal(result.confidence, 'high');
   assert.equal(result.fix.file, 'blocks/hero/hero.js');
+});
+
+test('normalizeDiagnosis downgrades high confidence when fix is not in recent diffs', () => {
+  const result = normalizeDiagnosis({
+    diagnosis: 'Hero image is lazy loaded.',
+    rootCause: 'abc1234 blocks/hero/hero.js',
+    confidence: 'high',
+    fix: {
+      file: 'blocks/hero/hero.js',
+      original: 'img.loading = "lazy"',
+      replacement: 'img.loading = "eager"',
+    },
+  }, [{ diff: 'complete unrelated diff', truncated: false }]);
+
+  assert.equal(result.confidence, 'low');
+  assert.equal(result.fix, undefined);
+});
+
+test('fixIsGroundedInDiff requires the exact original string in recent diffs', () => {
+  assert.equal(fixIsGroundedInDiff({
+    original: 'img.loading = "lazy"',
+  }, [{ diff: 'img.loading = "lazy"', truncated: false }]), true);
+  assert.equal(fixIsGroundedInDiff({
+    original: 'img.loading = "lazy"',
+  }, [{ diff: 'content-only change', truncated: false }]), false);
 });
 
 test('diagnose retries transient GitHub Models failures', async () => {

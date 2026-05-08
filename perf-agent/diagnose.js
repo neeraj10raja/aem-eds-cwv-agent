@@ -69,9 +69,20 @@ ${opsList}
 ${commitLog || '(no commits found in lookback window)'}`;
 }
 
+function getDiffText(diffInfo) {
+  return typeof diffInfo === 'string' ? diffInfo : diffInfo?.diff ?? '';
+}
+
+function fixIsGroundedInDiff(fix, diffs) {
+  if (!fix?.original) return false;
+  return diffs.some((diffInfo) => getDiffText(diffInfo).includes(fix.original));
+}
+
 function normalizeDiagnosis(parsed, diffs) {
   const hasTruncatedDiff = diffs.some((d) => typeof d === 'object' && d?.truncated);
-  if (hasTruncatedDiff && parsed.confidence === 'high') {
+  const highConfidenceWithoutGroundedFix = parsed.confidence === 'high'
+    && !fixIsGroundedInDiff(parsed.fix, diffs);
+  if ((hasTruncatedDiff || highConfidenceWithoutGroundedFix) && parsed.confidence === 'high') {
     return {
       diagnosis: parsed.diagnosis,
       rootCause: parsed.rootCause,
@@ -127,4 +138,9 @@ async function diagnose(regression, commits, diffs, token, model = DEFAULT_MODEL
   throw lastError;
 }
 
-export { buildPrompt, diagnose, normalizeDiagnosis };
+export {
+  buildPrompt,
+  diagnose,
+  fixIsGroundedInDiff,
+  normalizeDiagnosis,
+};
