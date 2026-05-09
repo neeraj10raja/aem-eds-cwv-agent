@@ -1,4 +1,5 @@
 {
+  "site_url": "https://main--repo--owner.aem.page",
   "paths": ["/"],
   "strategy": "mobile",
   "thresholds": {

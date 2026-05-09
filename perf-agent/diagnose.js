@@ -29,7 +29,7 @@ Rules:
 - fix.original must be an exact substring from the provided diff — do not paraphrase or reconstruct it.
 - Omit the fix key entirely when confidence is "low".`;
 
-function buildPrompt(regression, commits, diffs) {
+function buildPrompt(regression, commits, diffs, lookbackHours = 48) {
   const lcpBefore = regression.baseline_lcp_ms != null
     ? `${regression.baseline_lcp_ms}ms`
     : 'no baseline';
@@ -65,7 +65,7 @@ Score before: ${scoreBefore} → after: ${regression.current_score}${scoreDelta}
 ## Top Lighthouse Opportunities
 ${opsList}
 
-## Recent Code Changes (last 48h)
+## Recent Code Changes (last ${lookbackHours}h)
 ${commitLog || '(no commits found in lookback window)'}`;
 }
 
@@ -92,7 +92,14 @@ function normalizeDiagnosis(parsed, diffs) {
   return parsed;
 }
 
-async function diagnose(regression, commits, diffs, token, model = DEFAULT_MODEL) {
+async function diagnose(
+  regression,
+  commits,
+  diffs,
+  token,
+  model = DEFAULT_MODEL,
+  lookbackHours = 48,
+) {
   let lastError;
 
   for (let attempt = 0; attempt <= 3; attempt += 1) {
@@ -107,7 +114,7 @@ async function diagnose(regression, commits, diffs, token, model = DEFAULT_MODEL
         model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildPrompt(regression, commits, diffs) },
+          { role: 'user', content: buildPrompt(regression, commits, diffs, lookbackHours) },
         ],
         temperature: 0.1,
         max_tokens: 2048,

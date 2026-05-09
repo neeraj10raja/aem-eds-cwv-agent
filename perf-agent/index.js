@@ -107,7 +107,7 @@ function buildPRBody(regression, result, diagnosisResult) {
   body += `| LCP | ${baselineLCP} | ${regression.current_lcp_ms}ms | ${lcpDelta} |\n`;
   body += `| INP | n/a | ${regression.current_inp_ms}ms | n/a |\n`;
   body += `| CLS | n/a | ${regression.current_cls} | n/a |\n`;
-  body += `| Score | ${regression.baseline_score ?? 'n/a'} | ${regression.current_score} | ${scoreDelta} |\n\n`;
+  body += `| Score | ${regression.baseline_score ?? 'n/a'} | ${regression.current_score ?? 'n/a'} | ${scoreDelta} |\n\n`;
   body += `**Diagnosis:** ${diagnosisResult.diagnosis}\n\n`;
   body += `**Root Cause:** ${diagnosisResult.rootCause}\n\n`;
 
@@ -141,7 +141,14 @@ async function handleRegression(regression, commits, diffs, config, context) {
     };
   } else {
     try {
-      diagnosisResult = await diagnose(regression, commits, diffs, token, context.model);
+      diagnosisResult = await diagnose(
+        regression,
+        commits,
+        diffs,
+        token,
+        context.model,
+        config.lookback_hours,
+      );
       console.log(`[diagnose] confidence=${diagnosisResult.confidence}: ${diagnosisResult.diagnosis}`);
     } catch (err) {
       console.error(`[diagnose] Failed: ${err.message}`);

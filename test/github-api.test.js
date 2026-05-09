@@ -5,6 +5,7 @@ import {
   addLabels,
   checkOpenIssues,
   checkOpenPRs,
+  getRecentCommits,
   getCommitDiff,
 } from '../perf-agent/github-api.js';
 
@@ -34,6 +35,46 @@ test('getCommitDiff retries transient failures and returns truncation metadata',
     assert.equal(calls, 2);
     assert.equal(result.diff, '01234');
     assert.equal(result.truncated, true);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('getRecentCommits paginates through active repositories', async () => {
+  const originalFetch = global.fetch;
+  const requestedUrls = [];
+  const makeCommit = (sha) => ({
+    sha,
+    commit: {
+      message: `Commit ${sha}\n\nDetails`,
+      author: {
+        name: 'Test User',
+        date: '2026-05-08T00:00:00Z',
+      },
+    },
+  });
+
+  global.fetch = async (url) => {
+    requestedUrls.push(url);
+    const page = new URL(url).searchParams.get('page');
+    const commits = page === '1'
+      ? Array.from({ length: 100 }, (_, i) => makeCommit(`sha-${i}`))
+      : [makeCommit('sha-100')];
+    return {
+      ok: true,
+      status: 200,
+      json: async () => commits,
+    };
+  };
+
+  try {
+    const commits = await getRecentCommits('owner', 'repo', '2026-05-07T00:00:00Z', 'token');
+
+    assert.equal(commits.length, 101);
+    assert.equal(requestedUrls.length, 2);
+    assert.match(requestedUrls[0], /per_page=100/);
+    assert.match(requestedUrls[1], /page=2/);
+    assert.equal(commits[0].message, 'Commit sha-0');
   } finally {
     global.fetch = originalFetch;
   }

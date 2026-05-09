@@ -5,6 +5,11 @@ function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
 }
 
+function getPSIStatus(error) {
+  const status = Number(error.message.match(/PSI (\d+)/)?.[1]);
+  return Number.isNaN(status) ? null : status;
+}
+
 function extractOpportunities(audits) {
   return Object.values(audits)
     .filter((a) => a.details?.type === 'opportunity' && (a.numericValue ?? 0) > 0)
@@ -54,7 +59,8 @@ async function fetchPSI(url, strategy = 'mobile', apiKey = null) {
         if (attempt === retries) throw lastError;
       }
 
-      if (!RETRY_STATUSES.has(Number(lastError.message.match(/PSI (\d+)/)?.[1]))) {
+      const status = getPSIStatus(lastError);
+      if (status && !RETRY_STATUSES.has(status)) {
         throw lastError;
       }
 

@@ -31,6 +31,11 @@ function isSafeFixTarget(file) {
     && !PROTECTED_FILES.includes(file);
 }
 
+function countOccurrences(content, needle) {
+  if (!needle) return 0;
+  return content.split(needle).length - 1;
+}
+
 async function waitForPreview(
   url,
   timeoutMs = DEFAULT_PREVIEW_TIMEOUT_MS,
@@ -42,7 +47,11 @@ async function waitForPreview(
   while (Date.now() < deadline) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      let res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (res.status === 405 || res.status === 501) {
+        // eslint-disable-next-line no-await-in-loop
+        res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      }
       if (res.ok) return true;
       lastError = `preview returned HTTP ${res.status}`;
     } catch (err) {
@@ -75,10 +84,11 @@ async function applyAndVerify(fixData, regression, context) {
 
   const { content, sha } = await getFileContent(owner, repo, file, defaultBranch, token);
 
-  if (!content.includes(original)) {
+  const originalOccurrences = countOccurrences(content, original);
+  if (originalOccurrences !== 1) {
     return {
       success: false,
-      reason: `original string not found exactly in ${file} — cannot apply fix safely`,
+      reason: `original string must appear exactly once in ${file}; found ${originalOccurrences}`,
     };
   }
 
@@ -128,6 +138,7 @@ async function applyAndVerify(fixData, regression, context) {
 
 export {
   applyAndVerify,
+  countOccurrences,
   isSafeFixTarget,
   toDnsSafeBranchName,
   waitForPreview,

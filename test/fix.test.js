@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isSafeFixTarget, toDnsSafeBranchName } from '../perf-agent/fix.js';
+import { countOccurrences, isSafeFixTarget, toDnsSafeBranchName } from '../perf-agent/fix.js';
 
 test('toDnsSafeBranchName creates AEM-preview-safe branch names', () => {
   const branch = toDnsSafeBranchName('blocks/Hero Banner/hero.js');
@@ -24,4 +24,16 @@ test('isSafeFixTarget allows only scoped block and script files', () => {
   assert.equal(isSafeFixTarget('.github/workflows/perf-regression.yml'), false);
   assert.equal(isSafeFixTarget('blocks/hero/../../.github/workflows/main.yml'), false);
   assert.equal(isSafeFixTarget('/blocks/hero/hero.js'), false);
+});
+
+test('countOccurrences detects duplicate AI replacement targets', () => {
+  const content = `
+    img.loading = 'lazy';
+    picture.append(img);
+    img.loading = 'lazy';
+  `;
+
+  assert.equal(countOccurrences(content, "img.loading = 'lazy';"), 2);
+  assert.equal(countOccurrences(content, 'missing'), 0);
+  assert.equal(countOccurrences(content, ''), 0);
 });

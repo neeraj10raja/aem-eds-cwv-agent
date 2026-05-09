@@ -49,6 +49,29 @@ test('fetchPSI retries transient failures', async () => {
   }
 });
 
+test('fetchPSI retries thrown network errors', async () => {
+  const originalFetch = global.fetch;
+  let calls = 0;
+
+  global.fetch = async () => {
+    calls += 1;
+    if (calls === 1) throw new TypeError('network socket closed');
+    return {
+      ok: true,
+      json: async () => psiPayload(),
+    };
+  };
+
+  try {
+    const result = await fetchPSI('https://example.com/', 'mobile', 'key');
+
+    assert.equal(calls, 2);
+    assert.equal(result.score, 90);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('fetchPSI does not retry non-retryable failures', async () => {
   const originalFetch = global.fetch;
   let calls = 0;

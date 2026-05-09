@@ -48,6 +48,22 @@ test('buildPrompt renders missing baseline as no baseline', () => {
   assert.doesNotMatch(prompt, /nullms/);
 });
 
+test('buildPrompt uses the configured lookback window', () => {
+  const prompt = buildPrompt({
+    url: 'https://example.com/',
+    baseline_lcp_ms: 1000,
+    current_lcp_ms: 2200,
+    lcp_delta_ms: 1200,
+    baseline_score: 98,
+    current_score: 80,
+    score_delta: 18,
+    opportunities: [],
+  }, [], [], 72);
+
+  assert.match(prompt, /Recent Code Changes \(last 72h\)/);
+  assert.doesNotMatch(prompt, /last 48h/);
+});
+
 test('diagnose requests enough tokens for larger JSON fixes', async () => {
   const originalFetch = global.fetch;
   let requestBody;

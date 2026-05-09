@@ -62,10 +62,18 @@ async function ghFetch(path, token, options = {}) {
   });
 }
 
-async function getRecentCommits(owner, repo, sinceISO, token) {
-  const params = new URLSearchParams({ since: sinceISO, per_page: '20' });
-  const commits = await ghFetch(`/repos/${owner}/${repo}/commits?${params}`, token);
-  return commits.map((c) => ({
+async function getRecentCommits(owner, repo, sinceISO, token, maxPages = 5) {
+  const allCommits = [];
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const params = new URLSearchParams({ since: sinceISO, per_page: '100', page: String(page) });
+    // eslint-disable-next-line no-await-in-loop
+    const commits = await ghFetch(`/repos/${owner}/${repo}/commits?${params}`, token);
+    allCommits.push(...commits);
+    if (commits.length < 100) break;
+  }
+
+  return allCommits.map((c) => ({
     sha: c.sha,
     message: c.commit.message.split('\n')[0],
     author: c.commit.author.name,

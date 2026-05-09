@@ -52,25 +52,31 @@ function buildConfig(paths, siteUrl) {
   return `${JSON.stringify(config, null, 2)}\n`;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function patchEsLintConfig(target, agentDir) {
   const candidates = ['.eslintrc.js', '.eslintrc.cjs'];
   const found = candidates.find((f) => existsSync(join(target, f)));
-  if (!found) return false;
+  if (!found) return 'missing';
 
   const eslintPath = join(target, found);
   const content = readFileSync(eslintPath, 'utf8');
 
-  if (content.includes(agentDir)) return false;
+  const agentPattern = `${agentDir}/**/*.js`;
+  const agentPatternRegex = new RegExp(`['"\`]${escapeRegExp(agentPattern)}['"\`]`);
+  if (agentPatternRegex.test(content)) return 'already-configured';
 
   const patched = content.replace(
-    /files:\s*\[(['"`]tools\/\*\*\/\*\.js['"`])\]/,
-    `files: ['tools/**/*.js', '${agentDir}/**/*.js']`,
+    /files:\s*\[([^\]]*['"`]tools\/\*\*\/\*\.js['"`][^\]]*)\]/s,
+    (match, files) => `files: [${files.trim()}, '${agentPattern}']`,
   );
 
-  if (patched === content) return false;
+  if (patched === content) return 'unsupported';
 
   writeFileSync(eslintPath, patched);
-  return true;
+  return 'patched';
 }
 
 function install(args) {
@@ -96,12 +102,21 @@ function install(args) {
   const baselinePath = join(baselineDir, 'performance.json');
   if (!existsSync(baselinePath)) writeFileSync(baselinePath, '{}\n');
 
-  writeFileSync(join(target, 'perf-agent.config.json'), buildConfig(args.paths, args.siteUrl));
+  const configPath = join(target, 'perf-agent.config.json');
+  const configCreated = !existsSync(configPath);
+  if (configCreated) writeFileSync(configPath, buildConfig(args.paths, args.siteUrl));
 
-  const eslintPatched = patchEsLintConfig(target, args.agentDir);
+  const eslintStatus = patchEsLintConfig(target, args.agentDir);
 
   console.log(`Installed perf agent into ${target}`);
-  if (eslintPatched) console.log('Patched .eslintrc to add perf-agent Node.js overrides.');
+  if (eslintStatus === 'patched') console.log('Patched .eslintrc to add perf-agent Node.js overrides.');
+  else if (eslintStatus === 'already-configured') {
+    console.log('.eslintrc already includes perf-agent Node.js overrides.');
+  }
+  else if (eslintStatus === 'unsupported') {
+    console.log('Could not auto-patch .eslintrc; add a Node.js override for perf-agent/**/*.js.');
+  }
+  if (!configCreated) console.log('Kept existing perf-agent.config.json.');
   console.log('');
   console.log('Next steps in GitHub:');
   console.log('1. Add repository secret PSI_API_KEY.');
